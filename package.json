@@ -1,0 +1,22 @@
+{
+  "name": "router-pinger",
+  "version": "1.0.0",
+  "description": "Periodic network diagnostics logger for router/route/destination classification",
+  "main": "dist/index.js",
+  "bin": {
+    "router-pinger": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "typescript": "^6.0.3"
+  }
+}
