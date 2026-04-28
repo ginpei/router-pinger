@@ -10,6 +10,7 @@ const exec = promisify(execCallback);
 
 const DEFAULT_TARGET = "ginpei.dev";
 const DEFAULT_INTERVAL_SEC = 60;
+const DEFAULT_PING_HOPS = 3;
 const COMMAND_TIMEOUT_MS = 10_000;
 
 type FailureClassification = "router" | "route" | "destination" | "unknown";
@@ -39,11 +40,11 @@ type ProbeRecord = {
   outputPath: string;
   intervalSec: number;
   classification: Classification;
-  gateway: {
-    ip: string | null;
+  ping: Array<{
+    ip: string;
     reachable: boolean;
     error?: string;
-  };
+  }>;
   destinationPing: {
     reachable: boolean;
     error?: string;
@@ -61,6 +62,7 @@ type CliConfig = {
   outputPath: string;
   target: string;
   intervalSec: number;
+  pingHops: number;
 };
 
 function printUsageAndExit(message?: string): never {
@@ -70,13 +72,14 @@ function printUsageAndExit(message?: string): never {
   process.stderr.write(
     [
       "Usage:",
-      "  router-pinger --output <path> [--interval <seconds>] [--target <host>]",
-      "  router-pinger -o <path> [-i <seconds>] [-t <host>]",
+      "  router-pinger --output <path> [--interval <seconds>] [--target <host>] [--ping-hops <count>]",
+      "  router-pinger -o <path> [-i <seconds>] [-t <host>] [-p <count>]",
       "",
       "Options:",
       "  --output,  -o   Required. JSONL output file path.",
       `  --interval,-i   Optional. Probe interval in seconds. Default: ${DEFAULT_INTERVAL_SEC}.`,
       `  --target,  -t   Optional. Target hostname/IP. Default: ${DEFAULT_TARGET}.`,
+      `  --ping-hops,-p  Optional. Number of first traceroute hops to ping. Default: ${DEFAULT_PING_HOPS}.`,
     ].join("\n"),
   );
   process.exit(1);
@@ -86,6 +89,7 @@ function parseArgs(argv: string[]): CliConfig {
   let outputPath = "";
   let target = DEFAULT_TARGET;
   let intervalSec = DEFAULT_INTERVAL_SEC;
+  let pingHops = DEFAULT_PING_HOPS;
   const positional: string[] = [];
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -121,6 +125,17 @@ function parseArgs(argv: string[]): CliConfig {
       }
       target = value;
       i += 1;
+    } else if (arg === "--ping-hops" || arg === "-p") {
+      const value = argv[i + 1];
+      if (!value) {
+        printUsageAndExit("Missing value for --ping-hops/-p");
+      }
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        printUsageAndExit("--ping-hops/-p must be a positive integer.");
+      }
+      pingHops = parsed;
+      i += 1;
     } else if (arg.startsWith("-")) {
       printUsageAndExit(`Unknown option: ${arg}`);
     } else {
@@ -136,7 +151,7 @@ function parseArgs(argv: string[]): CliConfig {
     printUsageAndExit("--output/-o (or first positional argument) is required.");
   }
 
-  return { outputPath, target, intervalSec };
+  return { outputPath, target, intervalSec, pingHops };
 }
 
 async function runCommand(command: string): Promise<CommandResult> {
@@ -152,29 +167,6 @@ async function runCommand(command: string): Promise<CommandResult> {
       error: err.message,
     };
   }
-}
-
-async function detectGatewayIp(): Promise<{ ip: string | null; error?: string }> {
-  const route = await runCommand("ip route");
-  if (!route.ok && !route.stdout) {
-    return { ip: null, error: route.error ?? "failed to run ip route" };
-  }
-
-  const defaultLine = route.stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.startsWith("default "));
-  if (!defaultLine) {
-    return { ip: null, error: "default route not found" };
-  }
-
-  const tokens = defaultLine.split(/\s+/);
-  const viaIndex = tokens.findIndex((token) => token === "via");
-  if (viaIndex < 0 || !tokens[viaIndex + 1]) {
-    return { ip: null, error: "gateway IP not found in default route" };
-  }
-
-  return { ip: tokens[viaIndex + 1] ?? null };
 }
 
 async function ping(host: string): Promise<{ reachable: boolean; error?: string }> {
@@ -218,6 +210,37 @@ function parseTracerouteLine(line: string): { hop: number | null; ip: string | n
     ip: ipMatch?.[1] ?? null,
     timeout,
   };
+}
+
+function extractFirstHopIps(tracerouteOutput: string, hopLimit: number): string[] {
+  const ipsByHop = new Map<number, string>();
+
+  for (const line of tracerouteOutput.split("\n")) {
+    const parsed = parseTracerouteLine(line);
+    if (parsed.hop === null || parsed.ip === null || parsed.hop > hopLimit) {
+      continue;
+    }
+    if (!ipsByHop.has(parsed.hop)) {
+      ipsByHop.set(parsed.hop, parsed.ip);
+    }
+  }
+
+  return [...ipsByHop.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, ip]) => ip);
+}
+
+async function pingHosts(hosts: string[]): Promise<ProbeRecord["ping"]> {
+  return Promise.all(
+    hosts.map(async (host) => {
+      const result = await ping(host);
+      return {
+        ip: host,
+        reachable: result.reachable,
+        error: result.error,
+      };
+    }),
+  );
 }
 
 async function runTraceroute(target: string, targetIp: string | null): Promise<TracerouteSummary> {
@@ -266,14 +289,14 @@ async function runTraceroute(target: string, targetIp: string | null): Promise<T
 }
 
 function classifyFailure(
-  gatewayReachable: boolean,
+  edgeReachable: boolean,
   destinationReachable: boolean,
   traceroute: TracerouteSummary,
 ): Classification {
   if (destinationReachable) {
     return "healthy";
   }
-  if (!gatewayReachable) {
+  if (!edgeReachable) {
     return "router";
   }
   if (traceroute.reachedTarget) {
@@ -291,14 +314,12 @@ async function appendJsonl(path: string, record: ProbeRecord): Promise<void> {
 }
 
 async function runProbe(config: CliConfig): Promise<ProbeRecord> {
-  const [gatewayInfo, targetIpInfo] = await Promise.all([
-    detectGatewayIp(),
-    resolveTargetIp(config.target),
-  ]);
-  const gatewayPing = gatewayInfo.ip ? await ping(gatewayInfo.ip) : { reachable: false, error: gatewayInfo.error };
+  const targetIpInfo = await resolveTargetIp(config.target);
   const destinationPing = await ping(config.target);
   const traceroute = await runTraceroute(config.target, targetIpInfo.ip);
-  const classification = classifyFailure(gatewayPing.reachable, destinationPing.reachable, traceroute);
+  const edgePing = await pingHosts(extractFirstHopIps(traceroute.stdout, config.pingHops));
+  const edgeReachable = edgePing.some((node) => node.reachable);
+  const classification = classifyFailure(edgeReachable, destinationPing.reachable, traceroute);
 
   return {
     timestamp: new Date().toISOString(),
@@ -307,11 +328,7 @@ async function runProbe(config: CliConfig): Promise<ProbeRecord> {
     outputPath: config.outputPath,
     intervalSec: config.intervalSec,
     classification,
-    gateway: {
-      ip: gatewayInfo.ip,
-      reachable: gatewayPing.reachable,
-      error: gatewayInfo.error ?? gatewayPing.error,
-    },
+    ping: edgePing,
     destinationPing: {
       reachable: destinationPing.reachable,
       error: destinationPing.error,
@@ -358,7 +375,7 @@ async function main(): Promise<void> {
         outputPath: config.outputPath,
         intervalSec: config.intervalSec,
         classification: "unknown",
-        gateway: { ip: null, reachable: false, error: "probe execution failed" },
+        ping: [],
         destinationPing: { reachable: false, error: "probe execution failed" },
         traceroute: {
           ok: false,
