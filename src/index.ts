@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 
 import { appendFile, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
 import { lookup } from "node:dns/promises";
 import { exec as execCallback } from "node:child_process";
+import { dirname } from "node:path";
 import { promisify } from "node:util";
 
 const exec = promisify(execCallback);
 
-const DEFAULT_TARGET = "ginpei.dev";
 const DEFAULT_INTERVAL_SEC = 60;
 const DEFAULT_PING_HOPS = 3;
 const COMMAND_TIMEOUT_MS = 10_000;
@@ -37,16 +36,15 @@ type ProbeRecord = {
   timestamp: string;
   target: string;
   targetIp: string | null;
-  outputPath: string;
   intervalSec: number;
   classification: Classification;
   ping: Array<{
     ip: string;
-    reachable: boolean;
+    ok: boolean;
     error?: string;
   }>;
   destinationPing: {
-    reachable: boolean;
+    ok: boolean;
     error?: string;
   };
   traceroute: {
@@ -59,8 +57,8 @@ type ProbeRecord = {
 };
 
 type CliConfig = {
-  outputPath: string;
   target: string;
+  outputPath: string;
   intervalSec: number;
   pingHops: number;
 };
@@ -72,13 +70,14 @@ function printUsageAndExit(message?: string): never {
   process.stderr.write(
     [
       "Usage:",
-      "  router-pinger --output <path> [--interval <seconds>] [--target <host>] [--ping-hops <count>]",
-      "  router-pinger -o <path> [-i <seconds>] [-t <host>] [-p <count>]",
+      "  router-pinger --target <host> --output <path> [--interval <seconds>] [--ping-hops <count>]",
+      "  router-pinger -t <host> -o <path> [-i <seconds>] [-p <count>]",
+      "  router-pinger <host> <path> [-i <seconds>] [-p <count>]",
       "",
       "Options:",
+      "  --target,  -t   Required. Target hostname/IP.",
       "  --output,  -o   Required. JSONL output file path.",
       `  --interval,-i   Optional. Probe interval in seconds. Default: ${DEFAULT_INTERVAL_SEC}.`,
-      `  --target,  -t   Optional. Target hostname/IP. Default: ${DEFAULT_TARGET}.`,
       `  --ping-hops,-p  Optional. Number of first traceroute hops to ping. Default: ${DEFAULT_PING_HOPS}.`,
     ].join("\n"),
   );
@@ -86,8 +85,8 @@ function printUsageAndExit(message?: string): never {
 }
 
 function parseArgs(argv: string[]): CliConfig {
+  let target = "";
   let outputPath = "";
-  let target = DEFAULT_TARGET;
   let intervalSec = DEFAULT_INTERVAL_SEC;
   let pingHops = DEFAULT_PING_HOPS;
   const positional: string[] = [];
@@ -100,13 +99,6 @@ function parseArgs(argv: string[]): CliConfig {
 
     if (arg === "--help" || arg === "-h") {
       printUsageAndExit();
-    } else if (arg === "--output" || arg === "-o") {
-      const value = argv[i + 1];
-      if (!value) {
-        printUsageAndExit("Missing value for --output/-o");
-      }
-      outputPath = value;
-      i += 1;
     } else if (arg === "--interval" || arg === "-i") {
       const value = argv[i + 1];
       if (!value) {
@@ -124,6 +116,13 @@ function parseArgs(argv: string[]): CliConfig {
         printUsageAndExit("Missing value for --target/-t");
       }
       target = value;
+      i += 1;
+    } else if (arg === "--output" || arg === "-o") {
+      const value = argv[i + 1];
+      if (!value) {
+        printUsageAndExit("Missing value for --output/-o");
+      }
+      outputPath = value;
       i += 1;
     } else if (arg === "--ping-hops" || arg === "-p") {
       const value = argv[i + 1];
@@ -143,15 +142,21 @@ function parseArgs(argv: string[]): CliConfig {
     }
   }
 
-  if (!outputPath && positional.length > 0) {
-    outputPath = positional[0]!;
+  if (!target && positional.length > 0) {
+    target = positional[0]!;
+  }
+  if (!outputPath && positional.length > 1) {
+    outputPath = positional[1]!;
   }
 
+  if (!target) {
+    printUsageAndExit("--target/-t (or first positional argument) is required.");
+  }
   if (!outputPath) {
-    printUsageAndExit("--output/-o (or first positional argument) is required.");
+    printUsageAndExit("--output/-o (or second positional argument) is required.");
   }
 
-  return { outputPath, target, intervalSec, pingHops };
+  return { target, outputPath, intervalSec, pingHops };
 }
 
 async function runCommand(command: string): Promise<CommandResult> {
@@ -169,12 +174,12 @@ async function runCommand(command: string): Promise<CommandResult> {
   }
 }
 
-async function ping(host: string): Promise<{ reachable: boolean; error?: string }> {
+async function ping(host: string): Promise<{ ok: boolean; error?: string }> {
   const result = await runCommand(`ping -c 1 -W 2 ${escapeForShell(host)}`);
   if (result.ok) {
-    return { reachable: true };
+    return { ok: true };
   }
-  return { reachable: false, error: result.error ?? (result.stderr.trim() || "ping failed") };
+  return { ok: false, error: result.error ?? (result.stderr.trim() || "ping failed") };
 }
 
 async function resolveTargetIp(target: string): Promise<{ ip: string | null; error?: string }> {
@@ -236,7 +241,7 @@ async function pingHosts(hosts: string[]): Promise<ProbeRecord["ping"]> {
       const result = await ping(host);
       return {
         ip: host,
-        reachable: result.reachable,
+        ok: result.ok,
         error: result.error,
       };
     }),
@@ -318,19 +323,18 @@ async function runProbe(config: CliConfig): Promise<ProbeRecord> {
   const destinationPing = await ping(config.target);
   const traceroute = await runTraceroute(config.target, targetIpInfo.ip);
   const edgePing = await pingHosts(extractFirstHopIps(traceroute.stdout, config.pingHops));
-  const edgeReachable = edgePing.some((node) => node.reachable);
-  const classification = classifyFailure(edgeReachable, destinationPing.reachable, traceroute);
+  const edgeReachable = edgePing.some((node) => node.ok);
+  const classification = classifyFailure(edgeReachable, destinationPing.ok, traceroute);
 
   return {
     timestamp: new Date().toISOString(),
     target: config.target,
     targetIp: targetIpInfo.ip,
-    outputPath: config.outputPath,
     intervalSec: config.intervalSec,
     classification,
     ping: edgePing,
     destinationPing: {
-      reachable: destinationPing.reachable,
+      ok: destinationPing.ok,
       error: destinationPing.error,
     },
     traceroute: {
@@ -372,11 +376,10 @@ async function main(): Promise<void> {
         timestamp: new Date().toISOString(),
         target: config.target,
         targetIp: null,
-        outputPath: config.outputPath,
         intervalSec: config.intervalSec,
         classification: "unknown",
         ping: [],
-        destinationPing: { reachable: false, error: "probe execution failed" },
+        destinationPing: { ok: false, error: "probe execution failed" },
         traceroute: {
           ok: false,
           reachedTarget: false,

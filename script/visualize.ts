@@ -1,0 +1,69 @@
+#!/usr/bin/env node
+
+const fs = require("node:fs");
+
+const HEALTHY_CHAR = ".";
+const PROBLEMATIC_CHAR = "!";
+const NOT_LOGGED_CHAR = " ";
+const MINUTES_PER_HOUR = 60;
+
+function usageAndExit(message) {
+  if (message) {
+    process.stderr.write(`${message}\n\n`);
+  }
+  process.stderr.write("Usage: node script/visualize.ts <output.txt>\n");
+  process.exit(1);
+}
+
+function toHourKey(date) {
+  const year = date.getFullYear().toString().padStart(4, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hour}`;
+}
+
+function main() {
+  const inputPath = process.argv[2];
+  if (!inputPath) {
+    usageAndExit("Missing output file path.");
+  }
+
+  const raw = fs.readFileSync(inputPath, "utf8");
+  const lines = raw.split("\n").filter((line) => line.trim() !== "");
+  const buckets = new Map();
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch (error) {
+      usageAndExit(`Invalid JSON at line ${i + 1}: ${error.message}`);
+    }
+
+    const timestamp = new Date(record.timestamp);
+    if (Number.isNaN(timestamp.getTime())) {
+      usageAndExit(`Invalid timestamp at line ${i + 1}.`);
+    }
+    const minute = timestamp.getMinutes();
+    const key = toHourKey(timestamp);
+    const state = record.classification === "healthy" ? HEALTHY_CHAR : PROBLEMATIC_CHAR;
+    if (!buckets.has(key)) {
+      buckets.set(key, new Array(MINUTES_PER_HOUR).fill(NOT_LOGGED_CHAR));
+    }
+    const slots = buckets.get(key);
+    if (slots[minute] !== PROBLEMATIC_CHAR) {
+      slots[minute] = state;
+    }
+  }
+
+  const keys = [...buckets.keys()].sort((a, b) => a.localeCompare(b));
+  for (const key of keys) {
+    const hourLabel = key.slice(-2);
+    const slots = buckets.get(key);
+    process.stdout.write(`${hourLabel} ${slots.join("")}\n`);
+  }
+}
+
+main();
