@@ -50,15 +50,18 @@ node dist/index.js -i 30 -t ginpei.dev -o ./logs/network.jsonl
 ## 可視化スクリプト
 
 ```bash
-node script/visualize.ts output.txt
+node script/visualize.ts [output.txt]
 ```
 
 - 1行 = 1時間
 - 1文字 = 1ログ（分単位）
 - `.` = healthy, `!` = problematic, ` ` = not logged
+- 入力ファイルを省略した場合は標準入力から受け取る
+- 10分ごとに ` ` を挿入する
 
 出力例:
 
 ```text
-00 ......   ....!!.....!....        .....!!!!!!!!!.............
+00 .......... .......... .......... ........... ........... ..........
+01 ......   . ...!!..... !....         .....!!! !!!!!!..... ..........
 ```

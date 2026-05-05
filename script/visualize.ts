@@ -5,13 +5,14 @@ const fs = require("node:fs");
 const HEALTHY_CHAR = ".";
 const PROBLEMATIC_CHAR = "!";
 const NOT_LOGGED_CHAR = " ";
+const DIVIDER_CHAR = " ";
 const MINUTES_PER_HOUR = 60;
 
 function usageAndExit(message) {
   if (message) {
     process.stderr.write(`${message}\n\n`);
   }
-  process.stderr.write("Usage: node script/visualize.ts <output.txt>\n");
+  process.stderr.write("Usage: node script/visualize.ts [output.txt]\n");
   process.exit(1);
 }
 
@@ -23,13 +24,17 @@ function toHourKey(date) {
   return `${year}-${month}-${day} ${hour}`;
 }
 
+function formatSlots(slots) {
+  const chunks = [];
+  for (let i = 0; i < MINUTES_PER_HOUR; i += 10) {
+    chunks.push(slots.slice(i, i + 10).join(""));
+  }
+  return chunks.join(DIVIDER_CHAR);
+}
+
 function main() {
   const inputPath = process.argv[2];
-  if (!inputPath) {
-    usageAndExit("Missing output file path.");
-  }
-
-  const raw = fs.readFileSync(inputPath, "utf8");
+  const raw = inputPath ? fs.readFileSync(inputPath, "utf8") : fs.readFileSync(0, "utf8");
   const lines = raw.split("\n").filter((line) => line.trim() !== "");
   const buckets = new Map();
 
@@ -62,7 +67,7 @@ function main() {
   for (const key of keys) {
     const hourLabel = key.slice(-2);
     const slots = buckets.get(key);
-    process.stdout.write(`${hourLabel} ${slots.join("")}\n`);
+    process.stdout.write(`${hourLabel} ${formatSlots(slots)}\n`);
   }
 }
 

@@ -362,40 +362,47 @@ async function main(): Promise<void> {
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
 
+  let lastLoggedMinute: string | null = null;
+
   const loop = async (): Promise<void> => {
     if (stopped) {
       return;
     }
 
-    try {
-      const record = await runProbe(config);
-      await appendJsonl(config.outputPath, record);
-      process.stdout.write(`${record.timestamp} ${record.classification}\n`);
-    } catch (error) {
-      const fallback: ProbeRecord = {
-        timestamp: new Date().toISOString(),
-        target: config.target,
-        targetIp: null,
-        intervalSec: config.intervalSec,
-        classification: "unknown",
-        ping: [],
-        destinationPing: { ok: false, error: "probe execution failed" },
-        traceroute: {
-          ok: false,
-          reachedTarget: false,
-          lastResponsiveHop: null,
-          timeoutHopCount: 0,
-          error: (error as Error).message,
-        },
-      };
-      await appendJsonl(config.outputPath, fallback);
-      process.stderr.write(`${fallback.timestamp} unknown ${(error as Error).message}\n`);
+    const now = new Date();
+    const curMinute = `${now.getHours()}:${now.getMinutes()}`;
+    if (curMinute !== lastLoggedMinute) {
+      try {
+        const record = await runProbe(config);
+        await appendJsonl(config.outputPath, record);
+        process.stdout.write(`${record.timestamp} ${record.classification}\n`);
+      } catch (error) {
+        const fallback: ProbeRecord = {
+          timestamp: new Date().toISOString(),
+          target: config.target,
+          targetIp: null,
+          intervalSec: config.intervalSec,
+          classification: "unknown",
+          ping: [],
+          destinationPing: { ok: false, error: "probe execution failed" },
+          traceroute: {
+            ok: false,
+            reachedTarget: false,
+            lastResponsiveHop: null,
+            timeoutHopCount: 0,
+            error: (error as Error).message,
+          },
+        };
+        await appendJsonl(config.outputPath, fallback);
+        process.stderr.write(`${fallback.timestamp} unknown ${(error as Error).message}\n`);
+      }
+      lastLoggedMinute = curMinute;
     }
 
     if (!stopped) {
       timer = setTimeout(() => {
         void loop();
-      }, config.intervalSec * 1000);
+      }, 1000);
     }
   };
 
