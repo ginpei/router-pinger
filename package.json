@@ -10,7 +10,9 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "visualization": "node script/visualize.ts"
+    "visualization": "node script/visualize.ts",
+    "visualization--watch": "sh -c 'watch \"tail -n600 \\\"$1\\\" | npm run visualization\"' --",
+    "print-last": "sh -c 'tail -1 \"$1\" | jq' --"
   },
   "keywords": [],
   "author": "",
