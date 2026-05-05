@@ -53,7 +53,7 @@ function main() {
     }
     const minute = timestamp.getMinutes();
     const key = toHourKey(timestamp);
-    const state = record.classification === "healthy" ? HEALTHY_CHAR : PROBLEMATIC_CHAR;
+    const state = record.classification === "ok" ? HEALTHY_CHAR : PROBLEMATIC_CHAR;
     if (!buckets.has(key)) {
       buckets.set(key, new Array(MINUTES_PER_HOUR).fill(NOT_LOGGED_CHAR));
     }

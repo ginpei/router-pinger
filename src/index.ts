@@ -13,7 +13,7 @@ const DEFAULT_PING_HOPS = 3;
 const COMMAND_TIMEOUT_MS = 10_000;
 
 type FailureClassification = "router" | "route" | "destination" | "unknown";
-type Classification = "healthy" | FailureClassification;
+type Classification = "ok" | FailureClassification;
 
 type CommandResult = {
   ok: boolean;
@@ -299,7 +299,7 @@ function classifyFailure(
   traceroute: TracerouteSummary,
 ): Classification {
   if (destinationReachable) {
-    return "healthy";
+    return "ok";
   }
   if (!edgeReachable) {
     return "router";
