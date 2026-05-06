@@ -374,7 +374,10 @@ async function main(): Promise<void> {
       try {
         const record = await runProbe(config);
         await appendJsonl(config.outputPath, record);
-        process.stdout.write(`${record.timestamp} ${record.classification}\n`);
+        const d = new Date(record.timestamp);
+        const pad = (n: number) => n.toString().padStart(2, '0');
+        const localTime = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        process.stdout.write(`${localTime} ${record.classification}\n`);
       } catch (error) {
         const fallback: ProbeRecord = {
           timestamp: new Date().toISOString(),
