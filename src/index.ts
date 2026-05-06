@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 
 const exec = promisify(execCallback);
 
-const DEFAULT_INTERVAL_SEC = 60;
+const DEFAULT_INTERVAL_SEC = 15;
 const DEFAULT_PING_HOPS = 3;
 const COMMAND_TIMEOUT_MS = 10_000;
 
@@ -362,16 +362,15 @@ async function main(): Promise<void> {
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
 
-  let lastLoggedMinute: string | null = null;
+  let lastProbeTime: number | null = null;
 
   const loop = async (): Promise<void> => {
     if (stopped) {
       return;
     }
 
-    const now = new Date();
-    const curMinute = `${now.getHours()}:${now.getMinutes()}`;
-    if (curMinute !== lastLoggedMinute) {
+    const now = Date.now();
+    if (lastProbeTime === null || now - lastProbeTime >= config.intervalSec * 1000) {
       try {
         const record = await runProbe(config);
         await appendJsonl(config.outputPath, record);
@@ -396,7 +395,7 @@ async function main(): Promise<void> {
         await appendJsonl(config.outputPath, fallback);
         process.stderr.write(`${fallback.timestamp} unknown ${(error as Error).message}\n`);
       }
-      lastLoggedMinute = curMinute;
+      lastProbeTime = now;
     }
 
     if (!stopped) {
