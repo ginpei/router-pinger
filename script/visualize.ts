@@ -76,6 +76,18 @@ for (const [slotKey, results] of merged.entries()) {
 }
 
   const keys = [...buckets2.keys()].sort((a, b) => a.localeCompare(b));
+  // Print minute headings, aligned to slot columns
+  const minuteHeadings = ["00", "10", "20", "30", "40", "50"];
+  let headingLine = "   ";
+  for (let i = 0; i < minuteHeadings.length; i++) {
+    const label = minuteHeadings[i];
+    // Left-align the label in a 10-char wide slot group
+    const pad = 10;
+    headingLine += label.padEnd(pad, ' ');
+    if (i < minuteHeadings.length - 1) headingLine += DIVIDER_CHAR;
+  }
+  process.stdout.write(headingLine + "\n");
+
   for (const key of keys) {
     const hourLabel = key.slice(-2);
     const slots = buckets2.get(key);
