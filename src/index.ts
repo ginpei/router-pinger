@@ -372,7 +372,15 @@ async function main(): Promise<void> {
     const now = Date.now();
     if (lastProbeTime === null || now - lastProbeTime >= config.intervalSec * 1000) {
       try {
-        const record = await runProbe(config);
+        let record = await runProbe(config);
+        // If route issue, immediately re-check in case it's actually a router issue
+        if (record.classification === "route") {
+          const recheck = await runProbe(config);
+          if (recheck.classification === "router") {
+            record = recheck;
+            process.stdout.write("[recheck] Detected router issue after route.\n");
+          }
+        }
         await appendJsonl(config.outputPath, record);
         const d = new Date(record.timestamp);
         const pad = (n: number) => n.toString().padStart(2, '0');
